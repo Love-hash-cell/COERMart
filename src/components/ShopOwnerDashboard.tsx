@@ -1,9 +1,11 @@
+
 import { useEffect, useState, type FormEvent } from "react";
 import { io } from "socket.io-client";
 import { API_URL } from "../utils/config";
 import {
     Plus,
     Trash2,
+    Pencil,
     Package,
     Store,
     ShoppingBag,
@@ -73,6 +75,7 @@ function ShopOwnerDashboard() {
     const [ordersLoading, setOrdersLoading] = useState(true);
     const [updatingOrder, setUpdatingOrder] = useState("");
 
+    // Product form states
     const [name, setName] = useState("");
     const [description, setDescription] = useState("");
     const [price, setPrice] = useState("");
@@ -81,6 +84,11 @@ function ShopOwnerDashboard() {
 
     const [loading, setLoading] = useState(true);
     const [adding, setAdding] = useState(false);
+    const [updatingProduct, setUpdatingProduct] = useState(false);
+    const [editingProductId, setEditingProductId] = useState<string | null>(
+        null
+    );
+
     const [error, setError] = useState("");
     const [success, setSuccess] = useState("");
 
@@ -132,8 +140,7 @@ function ShopOwnerDashboard() {
 
     const fetchShop = async () => {
         try {
-            const userData =
-                sessionStorage.getItem("coermart_user");
+            const userData = sessionStorage.getItem("coermart_user");
 
             if (!userData) return;
 
@@ -141,9 +148,7 @@ function ShopOwnerDashboard() {
 
             if (!user.shopId) return;
 
-            const response = await fetch(
-                `${API_URL}/api/shops`
-            );
+            const response = await fetch(`${API_URL}/api/shops`);
 
             const shops = await response.json();
 
@@ -200,17 +205,16 @@ function ShopOwnerDashboard() {
         }
     };
 
+    /* ================================
+       INITIAL LOAD + SOCKET
+    ================================= */
+
     useEffect(() => {
         fetchProducts();
         fetchShop();
         fetchOrders();
 
-        // =============================================
-        // REAL-TIME NEW ORDER LISTENER
-        // =============================================
-
-        const savedUser =
-            sessionStorage.getItem("coermart_user");
+        const savedUser = sessionStorage.getItem("coermart_user");
 
         if (!savedUser) return;
 
@@ -219,10 +223,7 @@ function ShopOwnerDashboard() {
         try {
             user = JSON.parse(savedUser);
         } catch (error) {
-            console.error(
-                "Failed to parse user data:",
-                error
-            );
+            console.error("Failed to parse user data:", error);
             return;
         }
 
@@ -241,25 +242,28 @@ function ShopOwnerDashboard() {
             socket.emit("join-shop", shopId);
         });
 
-        socket.on(
-            "new-order-created",
-            (newOrder) => {
-                console.log(
-                    "New order received:",
-                    newOrder
-                );
+        socket.on("new-order-created", (newOrder) => {
+            console.log("New order received:", newOrder);
 
-                // Fetch the complete order details
-                // without changing the existing UI
-                fetchOrders();
-            }
-        );
+            fetchOrders();
+        });
+
+        socket.on("product-updated", (updatedProduct) => {
+            console.log("Product updated:", updatedProduct);
+
+            fetchProducts();
+        });
+
+        socket.on("product-created", () => {
+            fetchProducts();
+        });
+
+        socket.on("product-deleted", () => {
+            fetchProducts();
+        });
 
         socket.on("connect_error", (error) => {
-            console.error(
-                "Shop owner socket error:",
-                error
-            );
+            console.error("Shop owner socket error:", error);
         });
 
         return () => {
@@ -268,7 +272,20 @@ function ShopOwnerDashboard() {
     }, []);
 
     /* ================================
-       ADD PRODUCT
+       CLEAR PRODUCT FORM
+    ================================= */
+
+    const clearProductForm = () => {
+        setName("");
+        setDescription("");
+        setPrice("");
+        setCategory("");
+        setImage("");
+        setEditingProductId(null);
+    };
+
+    /* ================================
+       ADD / UPDATE PRODUCT
     ================================= */
 
     const handleAddProduct = async (e: FormEvent) => {
@@ -287,6 +304,11 @@ function ShopOwnerDashboard() {
             return;
         }
 
+        if (Number.isNaN(Number(price)) || Number(price) < 0) {
+            setError("Please enter a valid price.");
+            return;
+        }
+
         if (!category.trim()) {
             setError("Please enter product category.");
             return;
@@ -297,55 +319,104 @@ function ShopOwnerDashboard() {
             return;
         }
 
-        try {
-            setAdding(true);
+        const isEditing = Boolean(editingProductId);
 
-            const response = await fetch(
-                `${API_URL}/api/products`,
-                {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        Authorization: `Bearer ${token}`,
-                    },
-                    body: JSON.stringify({
-                        name: name.trim(),
-                        description: description.trim(),
-                        price: Number(price),
-                        category: category.trim(),
-                        image: image.trim(),
-                    }),
-                }
-            );
+        try {
+            if (isEditing) {
+                setUpdatingProduct(true);
+            } else {
+                setAdding(true);
+            }
+
+            const url = isEditing
+                ? `${API_URL}/api/products/${editingProductId}`
+                : `${API_URL}/api/products`;
+
+            const response = await fetch(url, {
+                method: isEditing ? "PUT" : "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${token}`,
+                },
+                body: JSON.stringify({
+                    name: name.trim(),
+                    description: description.trim(),
+                    price: Number(price),
+                    category: category.trim(),
+                    image: image.trim(),
+                }),
+            });
 
             const data = await response.json();
 
             if (!response.ok) {
                 throw new Error(
-                    data.message || "Failed to add product."
+                    data.message ||
+                    (isEditing
+                        ? "Failed to update product."
+                        : "Failed to add product.")
                 );
             }
 
-            setSuccess("Product added successfully!");
+            setSuccess(
+                isEditing
+                    ? "Product updated successfully!"
+                    : "Product added successfully!"
+            );
 
-            setName("");
-            setDescription("");
-            setPrice("");
-            setCategory("");
-            setImage("");
-
+            clearProductForm();
             fetchProducts();
         } catch (error) {
-            console.error("Add product error:", error);
+            console.error(
+                isEditing
+                    ? "Update product error:"
+                    : "Add product error:",
+                error
+            );
 
             setError(
                 error instanceof Error
                     ? error.message
-                    : "Failed to add product."
+                    : isEditing
+                        ? "Failed to update product."
+                        : "Failed to add product."
             );
         } finally {
             setAdding(false);
+            setUpdatingProduct(false);
         }
+    };
+
+    /* ================================
+       EDIT PRODUCT
+    ================================= */
+
+    const handleEditProduct = (product: Product) => {
+        setEditingProductId(product._id);
+
+        setName(product.name);
+        setDescription(product.description || "");
+        setPrice(String(product.price));
+        setCategory(product.category);
+        setImage(product.image || "");
+
+        setError("");
+        setSuccess("");
+
+        window.scrollTo({
+            top: 0,
+            behavior: "smooth",
+        });
+    };
+
+    /* ================================
+       CANCEL EDIT
+    ================================= */
+
+    const handleCancelEdit = () => {
+        clearProductForm();
+        setError("");
+        setSuccess("");
     };
 
     /* ================================
@@ -435,8 +506,7 @@ function ShopOwnerDashboard() {
 
             if (!response.ok) {
                 throw new Error(
-                    data.message ||
-                    "Failed to update order status."
+                    data.message || "Failed to update order status."
                 );
             }
 
@@ -461,10 +531,7 @@ function ShopOwnerDashboard() {
                 new Event("order-status-updated")
             );
         } catch (error) {
-            console.error(
-                "Update order status error:",
-                error
-            );
+            console.error("Update order status error:", error);
 
             setError(
                 error instanceof Error
@@ -514,6 +581,7 @@ function ShopOwnerDashboard() {
                         className="flex items-center gap-2 rounded-xl bg-green-500 px-4 py-2.5 text-xs font-black text-white transition hover:bg-green-600 disabled:opacity-50"
                     >
                         <CheckCircle size={15} />
+
                         {updatingOrder === order.orderId
                             ? "Updating..."
                             : "Accept Order"}
@@ -551,6 +619,7 @@ function ShopOwnerDashboard() {
                     className="flex items-center gap-2 rounded-xl bg-orange-500 px-4 py-2.5 text-xs font-black text-white transition hover:bg-orange-600 disabled:opacity-50"
                 >
                     <Clock size={15} />
+
                     {updatingOrder === order.orderId
                         ? "Updating..."
                         : "Start Preparing"}
@@ -572,6 +641,7 @@ function ShopOwnerDashboard() {
                     className="flex items-center gap-2 rounded-xl bg-blue-500 px-4 py-2.5 text-xs font-black text-white transition hover:bg-blue-600 disabled:opacity-50"
                 >
                     <Truck size={15} />
+
                     {updatingOrder === order.orderId
                         ? "Updating..."
                         : "Out for Delivery"}
@@ -593,6 +663,7 @@ function ShopOwnerDashboard() {
                     className="flex items-center gap-2 rounded-xl bg-green-500 px-4 py-2.5 text-xs font-black text-white transition hover:bg-green-600 disabled:opacity-50"
                 >
                     <CheckCircle size={15} />
+
                     {updatingOrder === order.orderId
                         ? "Updating..."
                         : "Mark Delivered"}
@@ -605,7 +676,6 @@ function ShopOwnerDashboard() {
 
     return (
         <div className="mx-auto max-w-7xl px-4 py-8">
-
             {/* HEADER */}
 
             <div className="mb-8">
@@ -616,9 +686,7 @@ function ShopOwnerDashboard() {
 
                     <div>
                         <h1 className="text-2xl font-black text-gray-900 dark:text-white">
-                            {shop
-                                ? shop.name
-                                : "Shop Dashboard"}
+                            {shop ? shop.name : "Shop Dashboard"}
                         </h1>
 
                         <p className="text-sm text-gray-500 dark:text-gray-400">
@@ -648,18 +716,20 @@ function ShopOwnerDashboard() {
                 </div>
             )}
 
-            {/* ADD PRODUCT */}
+            {/* ADD / EDIT PRODUCT */}
 
             <div className="mb-8 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-
                 <div className="mb-5 flex items-center gap-2">
-                    <Plus
-                        size={20}
-                        className="text-red-500"
-                    />
+                    {editingProductId ? (
+                        <Pencil size={20} className="text-red-500" />
+                    ) : (
+                        <Plus size={20} className="text-red-500" />
+                    )}
 
                     <h2 className="text-lg font-black text-gray-900 dark:text-white">
-                        Add Product
+                        {editingProductId
+                            ? "Edit Product"
+                            : "Add Product"}
                     </h2>
                 </div>
 
@@ -667,7 +737,6 @@ function ShopOwnerDashboard() {
                     onSubmit={handleAddProduct}
                     className="grid gap-4 md:grid-cols-2"
                 >
-
                     {/* PRODUCT NAME */}
 
                     <div>
@@ -678,9 +747,7 @@ function ShopOwnerDashboard() {
                         <input
                             type="text"
                             value={name}
-                            onChange={(e) =>
-                                setName(e.target.value)
-                            }
+                            onChange={(e) => setName(e.target.value)}
                             placeholder="e.g. Masala Maggi"
                             className="h-12 w-full rounded-xl border border-gray-200 bg-gray-50 px-4 text-sm outline-none focus:border-red-400 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
                         />
@@ -697,9 +764,7 @@ function ShopOwnerDashboard() {
                             type="number"
                             min="0"
                             value={price}
-                            onChange={(e) =>
-                                setPrice(e.target.value)
-                            }
+                            onChange={(e) => setPrice(e.target.value)}
                             placeholder="e.g. 50"
                             className="h-12 w-full rounded-xl border border-gray-200 bg-gray-50 px-4 text-sm outline-none focus:border-red-400 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
                         />
@@ -715,9 +780,7 @@ function ShopOwnerDashboard() {
                         <input
                             type="text"
                             value={category}
-                            onChange={(e) =>
-                                setCategory(e.target.value)
-                            }
+                            onChange={(e) => setCategory(e.target.value)}
                             placeholder={
                                 shop?.type === "stationery"
                                     ? "e.g. Notebooks"
@@ -737,9 +800,7 @@ function ShopOwnerDashboard() {
                         <input
                             type="url"
                             value={image}
-                            onChange={(e) =>
-                                setImage(e.target.value)
-                            }
+                            onChange={(e) => setImage(e.target.value)}
                             placeholder="https://..."
                             className="h-12 w-full rounded-xl border border-gray-200 bg-gray-50 px-4 text-sm outline-none focus:border-red-400 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
                         />
@@ -755,9 +816,7 @@ function ShopOwnerDashboard() {
                         <textarea
                             value={description}
                             onChange={(e) =>
-                                setDescription(
-                                    e.target.value
-                                )
+                                setDescription(e.target.value)
                             }
                             placeholder="Short product description"
                             rows={3}
@@ -765,20 +824,38 @@ function ShopOwnerDashboard() {
                         />
                     </div>
 
-                    {/* ADD BUTTON */}
+                    {/* ADD / UPDATE BUTTONS */}
 
-                    <div className="md:col-span-2">
+                    <div className="flex flex-wrap gap-3 md:col-span-2">
                         <button
                             type="submit"
-                            disabled={adding}
+                            disabled={adding || updatingProduct}
                             className="flex items-center justify-center gap-2 rounded-xl bg-red-500 px-6 py-3 text-sm font-black text-white transition hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-60"
                         >
-                            <Plus size={18} />
+                            {editingProductId ? (
+                                <Pencil size={18} />
+                            ) : (
+                                <Plus size={18} />
+                            )}
 
-                            {adding
-                                ? "Adding..."
-                                : "Add Product"}
+                            {updatingProduct
+                                ? "Updating..."
+                                : adding
+                                    ? "Adding..."
+                                    : editingProductId
+                                        ? "Save Changes"
+                                        : "Add Product"}
                         </button>
+
+                        {editingProductId && (
+                            <button
+                                type="button"
+                                onClick={handleCancelEdit}
+                                className="rounded-xl bg-gray-100 px-6 py-3 text-sm font-black text-gray-700 transition hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                            >
+                                Cancel
+                            </button>
+                        )}
                     </div>
                 </form>
             </div>
@@ -786,13 +863,9 @@ function ShopOwnerDashboard() {
             {/* PRODUCTS */}
 
             <div className="mb-8 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-
                 <div className="mb-6 flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                        <Package
-                            size={20}
-                            className="text-red-500"
-                        />
+                        <Package size={20} className="text-red-500" />
 
                         <h2 className="text-lg font-black text-gray-900 dark:text-white">
                             Your Products
@@ -820,8 +893,7 @@ function ShopOwnerDashboard() {
                         </p>
 
                         <p className="mt-1 text-sm text-gray-500">
-                            Add your first product using the
-                            form above.
+                            Add your first product using the form above.
                         </p>
                     </div>
                 ) : (
@@ -869,18 +941,33 @@ function ShopOwnerDashboard() {
                                         </p>
                                     )}
 
-                                    <button
-                                        type="button"
-                                        onClick={() =>
-                                            handleDeleteProduct(
-                                                product._id
-                                            )
-                                        }
-                                        className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-red-50 px-4 py-2.5 text-xs font-black text-red-600 transition hover:bg-red-100 dark:bg-red-500/10 dark:text-red-400"
-                                    >
-                                        <Trash2 size={16} />
-                                        Delete Product
-                                    </button>
+                                    {/* EDIT AND DELETE BUTTONS */}
+
+                                    <div className="mt-4 flex gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() =>
+                                                handleEditProduct(product)
+                                            }
+                                            className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-blue-50 px-3 py-2.5 text-xs font-black text-blue-600 transition hover:bg-blue-100 dark:bg-blue-500/10 dark:text-blue-400"
+                                        >
+                                            <Pencil size={16} />
+                                            Edit
+                                        </button>
+
+                                        <button
+                                            type="button"
+                                            onClick={() =>
+                                                handleDeleteProduct(
+                                                    product._id
+                                                )
+                                            }
+                                            className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-red-50 px-3 py-2.5 text-xs font-black text-red-600 transition hover:bg-red-100 dark:bg-red-500/10 dark:text-red-400"
+                                        >
+                                            <Trash2 size={16} />
+                                            Delete
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         ))}
@@ -888,19 +975,12 @@ function ShopOwnerDashboard() {
                 )}
             </div>
 
-            {/* =====================================================
-                ORDERS
-            ====================================================== */}
+            {/* ORDERS */}
 
             <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-
                 <div className="mb-6 flex items-center justify-between">
-
                     <div className="flex items-center gap-2">
-                        <ShoppingBag
-                            size={20}
-                            className="text-red-500"
-                        />
+                        <ShoppingBag size={20} className="text-red-500" />
 
                         <h2 className="text-lg font-black text-gray-900 dark:text-white">
                             Customer Orders
@@ -928,42 +1008,36 @@ function ShopOwnerDashboard() {
                         </p>
 
                         <p className="mt-1 text-sm text-gray-500">
-                            New orders from your shop will
-                            appear here.
+                            New orders from your shop will appear here.
                         </p>
                     </div>
                 ) : (
                     <div className="space-y-5">
-
                         {orders.map((order) => (
-
                             <div
                                 key={order._id}
                                 className="rounded-2xl border border-gray-200 bg-gray-50 p-5 dark:border-gray-700 dark:bg-gray-950"
                             >
-
                                 {/* ORDER HEADER */}
 
                                 <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
-
                                     <div>
                                         <div className="flex flex-wrap items-center gap-2">
-
                                             <h3 className="font-black text-gray-900 dark:text-white">
                                                 {order.orderId}
                                             </h3>
 
                                             <span
                                                 className={`rounded-full px-3 py-1 text-xs font-black ${order.status ===
-                                                    "Delivered"
-                                                    ? "bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-400"
-                                                    : order.status ===
-                                                        "Cancelled"
-                                                        ? "bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-400"
+                                                        "Delivered"
+                                                        ? "bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-400"
                                                         : order.status ===
-                                                            "Out for Delivery"
-                                                            ? "bg-blue-100 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400"
-                                                            : "bg-orange-100 text-orange-700 dark:bg-orange-500/10 dark:text-orange-400"
+                                                            "Cancelled"
+                                                            ? "bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-400"
+                                                            : order.status ===
+                                                                "Out for Delivery"
+                                                                ? "bg-blue-100 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400"
+                                                                : "bg-orange-100 text-orange-700 dark:bg-orange-500/10 dark:text-orange-400"
                                                     }`}
                                             >
                                                 {order.status}
@@ -991,7 +1065,6 @@ function ShopOwnerDashboard() {
                                 {/* CUSTOMER */}
 
                                 <div className="mt-5 rounded-xl bg-white p-4 dark:bg-gray-900">
-
                                     <p className="text-xs font-bold uppercase tracking-wide text-gray-400">
                                         Customer
                                     </p>
@@ -1019,8 +1092,7 @@ function ShopOwnerDashboard() {
 
                                     {order.instructions && (
                                         <p className="mt-2 text-sm text-gray-500">
-                                            Note:{" "}
-                                            {order.instructions}
+                                            Note: {order.instructions}
                                         </p>
                                     )}
                                 </div>
@@ -1028,39 +1100,34 @@ function ShopOwnerDashboard() {
                                 {/* ITEMS */}
 
                                 <div className="mt-4">
-
                                     <p className="mb-3 text-xs font-bold uppercase tracking-wide text-gray-400">
                                         Ordered Items
                                     </p>
 
                                     <div className="space-y-2">
+                                        {order.items.map((item, index) => (
+                                            <div
+                                                key={`${order.orderId}-${item.productId}-${index}`}
+                                                className="flex items-center justify-between rounded-xl bg-white px-4 py-3 dark:bg-gray-900"
+                                            >
+                                                <div>
+                                                    <p className="font-bold text-gray-900 dark:text-white">
+                                                        {item.name}
+                                                    </p>
 
-                                        {order.items.map(
-                                            (item, index) => (
-                                                <div
-                                                    key={`${order.orderId}-${item.productId}-${index}`}
-                                                    className="flex items-center justify-between rounded-xl bg-white px-4 py-3 dark:bg-gray-900"
-                                                >
-                                                    <div>
-                                                        <p className="font-bold text-gray-900 dark:text-white">
-                                                            {item.name}
-                                                        </p>
-
-                                                        <p className="text-xs text-gray-500">
-                                                            ₹
-                                                            {item.price} ×{" "}
-                                                            {item.quantity}
-                                                        </p>
-                                                    </div>
-
-                                                    <p className="font-black text-gray-900 dark:text-white">
-                                                        ₹
-                                                        {item.price *
-                                                            item.quantity}
+                                                    <p className="text-xs text-gray-500">
+                                                        ₹{item.price} ×{" "}
+                                                        {item.quantity}
                                                     </p>
                                                 </div>
-                                            )
-                                        )}
+
+                                                <p className="font-black text-gray-900 dark:text-white">
+                                                    ₹
+                                                    {item.price *
+                                                        item.quantity}
+                                                </p>
+                                            </div>
+                                        ))}
                                     </div>
                                 </div>
 
@@ -1068,18 +1135,14 @@ function ShopOwnerDashboard() {
 
                                 <div className="mt-4 flex flex-wrap gap-3 text-xs font-bold text-gray-500">
                                     <span>
-                                        Payment:{" "}
-                                        {order.paymentMethod}
+                                        Payment: {order.paymentMethod}
                                     </span>
 
                                     <span>
-                                        Status:{" "}
-                                        {order.paymentStatus}
+                                        Status: {order.paymentStatus}
                                     </span>
 
-                                    <span>
-                                        ETA: {order.eta}
-                                    </span>
+                                    <span>ETA: {order.eta}</span>
                                 </div>
 
                                 {/* ACTIONS */}
@@ -1087,10 +1150,8 @@ function ShopOwnerDashboard() {
                                 <div className="mt-5 border-t border-gray-200 pt-4 dark:border-gray-700">
                                     {renderStatusButtons(order)}
                                 </div>
-
                             </div>
                         ))}
-
                     </div>
                 )}
             </div>

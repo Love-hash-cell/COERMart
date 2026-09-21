@@ -109,6 +109,80 @@ router.get(
     }
 );
 
+// Update a product
+router.put(
+    "/:id",
+    protect,
+    authorize("shop_owner"),
+    async (req, res) => {
+        try {
+            const {
+                name,
+                description,
+                price,
+                image,
+                category,
+            } = req.body;
+
+            // Validate required fields
+            if (!name || price === undefined || !category) {
+                return res.status(400).json({
+                    message: "Name, price and category are required.",
+                });
+            }
+
+            // Find product belonging to the logged-in shop owner
+            const product = await Product.findOne({
+                _id: req.params.id,
+                shopId: req.user.shopId,
+            });
+
+            if (!product) {
+                return res.status(404).json({
+                    message:
+                        "Product not found or you do not own this product.",
+                });
+            }
+
+            // Validate price
+            if (Number.isNaN(Number(price)) || Number(price) < 0) {
+                return res.status(400).json({
+                    message: "Please enter a valid price.",
+                });
+            }
+
+            // Update product details
+            product.name = name;
+            product.description = description || "";
+            product.price = Number(price);
+            product.image = image || "";
+            product.category = category;
+
+            const updatedProduct = await product.save();
+
+            // Real-time notification for customers
+            const io = req.app.get("io");
+
+            if (io) {
+                io.emit("product-updated", {
+                    product: updatedProduct,
+                });
+            }
+
+            res.json({
+                message: "Product updated successfully.",
+                product: updatedProduct,
+            });
+        } catch (error) {
+            console.error("Update product error:", error);
+
+            res.status(500).json({
+                message: "Server error while updating product.",
+            });
+        }
+    }
+);
+
 // Delete a product
 router.delete(
     "/:id",
