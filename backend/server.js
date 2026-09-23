@@ -16,8 +16,6 @@ const shopRoutes = require("./routes/shopRoutes");
 
 dotenv.config();
 
-connectDB();
-
 const app = express();
 
 // Create HTTP server for Express + Socket.IO
@@ -79,6 +77,7 @@ app.use("/api/auth", authRoutes);
 
 // Admin routes
 app.use("/api/admin", adminRoutes);
+
 app.use("/api/products", productRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/shops", shopRoutes);
@@ -100,9 +99,27 @@ app.get("/api/shops", async (req, res) => {
     }
 });
 
+// Port
 const PORT = process.env.PORT || 5000;
 
-// Use server.listen for Express + Socket.IO
-server.listen(PORT, () => {
-    console.log(`COERMart Backend running on port ${PORT}`);
-});
+// Start server only after MongoDB connection
+const startServer = async () => {
+    try {
+        await connectDB();
+
+        server.listen(PORT, () => {
+            console.log(
+                `COERMart Backend running on port ${PORT}`
+            );
+        });
+    } catch (error) {
+        console.error(
+            "Server startup failed:",
+            error.message
+        );
+
+        process.exit(1);
+    }
+};
+
+startServer();
